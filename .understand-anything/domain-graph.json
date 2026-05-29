@@ -1,0 +1,2367 @@
+{
+  "version": "1.0.0",
+  "project": {
+    "name": "pi-monorepo",
+    "languages": [
+      "typescript",
+      "javascript",
+      "shell",
+      "markdown",
+      "yaml"
+    ],
+    "frameworks": [
+      "GitHub Actions",
+      "Vitest",
+      "esbuild",
+      "npm workspaces"
+    ],
+    "description": "Pi Agent Harness 单体仓库：以 pi-coding-agent 交互式 coding agent CLI 为核心，统一多 Provider LLM API（pi-ai）、通用 Agent 运行时（pi-agent-core）与终端 UI 库（pi-tui），支撑本地编码助手、RPC/print 无界面集成及 lockstep 发布。",
+    "analyzedAt": "2026-05-29T12:00:00.000Z",
+    "gitCommitHash": "7be8a10d2358fe60f1cf4507140aa9cfa81682ee"
+  },
+  "nodes": [
+    {
+      "id": "domain:coding-agent",
+      "type": "domain",
+      "name": "Coding Agent 应用",
+      "summary": "pi-coding-agent 包承载用户可见的 Agent Harness 应用：CLI 启动、会话树持久化、交互/RPC/print 运行模式、扩展与内置工具、编程式 SDK。负责把 agent 运行时、LLM 与 TUI 编排成可安装的 `pi` 命令体验。",
+      "tags": [
+        "coding-agent",
+        "cli",
+        "session",
+        "harness"
+      ],
+      "complexity": "complex",
+      "domainMeta": {
+        "entities": [
+          "AgentSession",
+          "SessionManager",
+          "Extension",
+          "Skill",
+          "运行模式"
+        ],
+        "businessRules": [
+          "会话以 JSONL 树结构持久化，支持分支与 compaction 条目",
+          "CLI 必须在迁移完成后才创建 runtime 并分派模式",
+          "扩展与内置工具共享统一的工具定义与权限模型"
+        ],
+        "crossDomainInteractions": [
+          "通过 pi-agent 驱动 LLM 工具循环",
+          "通过 pi-ai 解析模型与流式推理",
+          "通过 pi-tui 构建交互式终端界面"
+        ]
+      }
+    },
+    {
+      "id": "domain:unified-llm-api",
+      "type": "domain",
+      "name": "统一多 Provider LLM",
+      "summary": "pi-ai 包为全仓提供统一的 LLM 抽象：消息/工具/流事件类型、stream/complete API、内置 Anthropic/OpenAI/Google 等 provider 实现，以及模型目录、环境密钥与 API 注册表。上层 agent 与 coding-agent 均通过此域访问模型。",
+      "tags": [
+        "pi-ai",
+        "provider",
+        "streaming",
+        "models"
+      ],
+      "complexity": "complex",
+      "domainMeta": {
+        "entities": [
+          "Model",
+          "Message",
+          "Tool",
+          "StreamEvent",
+          "ApiProvider"
+        ],
+        "businessRules": [
+          "所有 provider 须经 api-registry 注册后方可被 stream.ts 分派",
+          "流事件使用 discriminated union，调用方需穷尽处理各事件类型",
+          "模型元数据（费用、thinking level）由 models.ts 集中约束"
+        ],
+        "crossDomainInteractions": [
+          "为 agent 主循环提供 stream/complete 能力",
+          "凭证由 coding-agent auth-storage 注入请求头"
+        ]
+      }
+    },
+    {
+      "id": "domain:agent-core-runtime",
+      "type": "domain",
+      "name": "Agent 核心运行时",
+      "summary": "pi-agent-core 包实现通用 Agent 状态机与 Harness：Agent 类、agent-loop 主循环（流式 LLM → 工具执行 → 写回消息）、会话仓储与 compaction 工具。介于应用编排与 LLM API 之间，可被 coding-agent 与 SDK 复用。",
+      "tags": [
+        "agent",
+        "agent-loop",
+        "harness",
+        "compaction"
+      ],
+      "complexity": "complex",
+      "domainMeta": {
+        "entities": [
+          "Agent",
+          "AgentHarness",
+          "Session",
+          "CompactionEntry"
+        ],
+        "businessRules": [
+          "主循环在 tool call 完成前不得发起下一轮 LLM",
+          "Harness 通过 Result 类型统一文件/执行/compaction 错误",
+          "上下文超限时须走 compaction 而非静默截断"
+        ],
+        "crossDomainInteractions": [
+          "调用 pi-ai stream 获取模型输出",
+          "会话 JSONL 存储与 coding-agent SessionManager 对齐"
+        ]
+      }
+    },
+    {
+      "id": "domain:terminal-ui",
+      "type": "domain",
+      "name": "终端 UI 库",
+      "summary": "pi-tui 包提供终端应用底层原语：TUI 运行时、组件树与焦点、stdin 转义序列解析、Editor/SelectList/Markdown 等组件，以及 Kitty/iTerm2 终端图像能力。coding-agent 交互模式在此之上拼装完整编码助手界面。",
+      "tags": [
+        "tui",
+        "terminal",
+        "components",
+        "rendering"
+      ],
+      "complexity": "moderate",
+      "domainMeta": {
+        "entities": [
+          "TUI",
+          "Component",
+          "Editor",
+          "Overlay",
+          "TerminalImage"
+        ],
+        "businessRules": [
+          "输入须经 StdinBuffer 完整解析 CSI/OSC 序列后再分派",
+          "组件布局需响应终端尺寸变化",
+          "图像渲染前须探测终端能力（Kitty/iTerm2）"
+        ],
+        "crossDomainInteractions": [
+          "由 coding-agent interactive-mode 挂载并驱动重绘",
+          "output-guard 防止 print 模式与 TUI 争抢 stdout"
+        ]
+      }
+    },
+    {
+      "id": "domain:ci-cd-release",
+      "type": "domain",
+      "name": "CI/CD 与发布",
+      "summary": "Monorepo 工程化域：GitHub Actions 在 push/PR 时执行 install/build/check/test，版本标签触发多平台二进制构建与 npm OIDC 发布。根 package.json workspaces 脚本把四包锁在同一条 lockstep 版本与质量门禁上。",
+      "tags": [
+        "ci",
+        "release",
+        "github-actions",
+        "monorepo"
+      ],
+      "complexity": "moderate",
+      "domainMeta": {
+        "entities": [
+          "Workflow",
+          "ReleaseTag",
+          "WorkspacePackage",
+          "BinaryArtifact"
+        ],
+        "businessRules": [
+          "PR 必须通过 ci.yml 全量 check 与 test 方可合并",
+          "发布仅由版本标签触发 build-binaries，使用 OIDC 而非仓库令牌",
+          "四包版本 lockstep 同步 bump"
+        ],
+        "crossDomainInteractions": [
+          "验证 coding-agent、ai、agent、tui 包构建产物",
+          "发布 @mariozechner/* npm 包供用户安装 pi"
+        ]
+      }
+    },
+    {
+      "id": "flow:cli-bootstrap",
+      "type": "flow",
+      "name": "CLI 启动与模式分派",
+      "summary": "用户执行 `pi` 时，从 Node/Bun 引导、参数解析、配置迁移到创建 AgentSession runtime，并分派至 interactive、print 或 RPC 模式。",
+      "tags": [
+        "cli",
+        "startup",
+        "bootstrap"
+      ],
+      "complexity": "complex",
+      "domainMeta": {
+        "entryPoint": "pi（packages/coding-agent/src/cli.ts）",
+        "entryType": "cli"
+      }
+    },
+    {
+      "id": "step:cli-bootstrap:shared-bootstrap",
+      "type": "step",
+      "name": "共享 CLI 引导",
+      "summary": "cli.ts 配置 HTTP dispatcher（undici idle timeout）并委托 main 启动，Node 与 Bun 二进制共用此入口。",
+      "tags": [
+        "bootstrap",
+        "http"
+      ],
+      "complexity": "simple",
+      "filePath": "packages/coding-agent/src/cli.ts",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "step:cli-bootstrap:parse-args",
+      "type": "step",
+      "name": "解析命令行参数",
+      "summary": "args.ts 解析 CLI 标志、校验 thinking level，并生成帮助文本与初始消息配置。",
+      "tags": [
+        "cli",
+        "args"
+      ],
+      "complexity": "moderate",
+      "filePath": "packages/coding-agent/src/cli/args.ts",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "step:cli-bootstrap:run-migrations",
+      "type": "step",
+      "name": "执行启动迁移",
+      "summary": "migrations.ts 在首次启动时迁移 auth、sessions、keybindings、extensions 等目录结构并展示弃用警告。",
+      "tags": [
+        "migration",
+        "startup"
+      ],
+      "complexity": "moderate",
+      "filePath": "packages/coding-agent/src/migrations.ts",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "step:cli-bootstrap:assemble-services",
+      "type": "step",
+      "name": "组装会话服务",
+      "summary": "agent-session-services.ts 注入 auth、model registry、resource loader 等依赖，为 AgentSession 准备运行时服务集合。",
+      "tags": [
+        "dependency-injection",
+        "session"
+      ],
+      "complexity": "moderate",
+      "filePath": "packages/coding-agent/src/core/agent-session-services.ts",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "step:cli-bootstrap:dispatch-mode",
+      "type": "step",
+      "name": "分派运行模式",
+      "summary": "main.ts 创建 session/runtime 后根据参数进入 interactive、print-mode 或 rpc-mode。",
+      "tags": [
+        "orchestration",
+        "mode"
+      ],
+      "complexity": "complex",
+      "filePath": "packages/coding-agent/src/main.ts",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "flow:session-lifecycle",
+      "type": "flow",
+      "name": "会话持久化与上下文",
+      "summary": "SessionManager 管理 JSONL 会话树的加载、分支、压缩条目与 LLM 上下文构建；AgentSession 在其上驱动多轮对话。",
+      "tags": [
+        "session",
+        "persistence",
+        "branching"
+      ],
+      "complexity": "complex",
+      "domainMeta": {
+        "entryPoint": "AgentSession 初始化 / 恢复会话",
+        "entryType": "manual"
+      }
+    },
+    {
+      "id": "step:session-lifecycle:load-entries",
+      "type": "step",
+      "name": "加载会话条目",
+      "summary": "从 JSONL 文件解析 header 与 entries，必要时执行 v1→v3 版本迁移。",
+      "tags": [
+        "jsonl",
+        "migration"
+      ],
+      "complexity": "moderate",
+      "filePath": "packages/coding-agent/src/core/session-manager.ts",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "step:session-lifecycle:validate-cwd",
+      "type": "step",
+      "name": "校验会话工作目录",
+      "summary": "session-cwd.ts 确认会话关联的项目 cwd 仍存在，否则格式化可恢复错误提示。",
+      "tags": [
+        "cwd",
+        "validation"
+      ],
+      "complexity": "simple",
+      "filePath": "packages/coding-agent/src/core/session-cwd.ts",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "step:session-lifecycle:build-context",
+      "type": "step",
+      "name": "构建 LLM 上下文",
+      "summary": "SessionManager.buildSessionContext 将条目树转换为发给模型的消息列表，并纳入 compaction 摘要。",
+      "tags": [
+        "context",
+        "messages"
+      ],
+      "complexity": "complex",
+      "filePath": "packages/coding-agent/src/core/session-manager.ts",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "step:session-lifecycle:agent-turn",
+      "type": "step",
+      "name": "执行 Agent 轮次",
+      "summary": "agent-session.ts 协调单轮 LLM 调用、工具执行、结果写回与事件广播。",
+      "tags": [
+        "agent-session",
+        "llm-loop"
+      ],
+      "complexity": "complex",
+      "filePath": "packages/coding-agent/src/core/agent-session.ts",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "step:session-lifecycle:persist-turn",
+      "type": "step",
+      "name": "持久化轮次结果",
+      "summary": "将 assistant/tool 消息追加到会话树，支持分支 fork 与标签元数据更新。",
+      "tags": [
+        "persistence",
+        "branching"
+      ],
+      "complexity": "moderate",
+      "filePath": "packages/coding-agent/src/core/session-manager.ts",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "flow:interactive-tui",
+      "type": "flow",
+      "name": "交互式 TUI 会话",
+      "summary": "interactive-mode 挂载 pi-tui 组件树，处理快捷键与扩展 UI 钩子，并把 AgentSession 流式状态同步到终端界面。",
+      "tags": [
+        "interactive",
+        "tui",
+        "ux"
+      ],
+      "complexity": "complex",
+      "domainMeta": {
+        "entryPoint": "默认无 -p 参数的 pi 启动",
+        "entryType": "cli"
+      }
+    },
+    {
+      "id": "step:interactive-tui:output-guard",
+      "type": "step",
+      "name": "接管 stdout",
+      "summary": "output-guard.ts 防止 TUI 渲染与原始 stdout 冲突，为全屏交互预留终端控制。",
+      "tags": [
+        "stdout",
+        "guard"
+      ],
+      "complexity": "moderate",
+      "filePath": "packages/coding-agent/src/core/output-guard.ts",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "step:interactive-tui:mount-ui",
+      "type": "step",
+      "name": "挂载交互界面",
+      "summary": "interactive-mode.ts 初始化 TUI 根组件、主题与布局，串联编辑器、消息区与状态栏。",
+      "tags": [
+        "interactive-mode",
+        "mount"
+      ],
+      "complexity": "complex",
+      "filePath": "packages/coding-agent/src/modes/interactive/interactive-mode.ts",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "step:interactive-tui:keybindings",
+      "type": "step",
+      "name": "绑定快捷键",
+      "summary": "keybindings.ts 加载默认与自定义按键映射，分派到编辑器、选择器与会话操作。",
+      "tags": [
+        "keybindings",
+        "input"
+      ],
+      "complexity": "moderate",
+      "filePath": "packages/coding-agent/src/core/keybindings.ts",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "step:interactive-tui:render-messages",
+      "type": "step",
+      "name": "渲染对话与工具",
+      "summary": "assistant-message、bash-execution 等组件将 AgentSession 事件流可视化为 Markdown 与执行面板。",
+      "tags": [
+        "components",
+        "rendering"
+      ],
+      "complexity": "moderate",
+      "filePath": "packages/coding-agent/src/modes/interactive/components/assistant-message.ts",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "step:interactive-tui:extension-hooks",
+      "type": "step",
+      "name": "驱动扩展 UI 钩子",
+      "summary": "ExtensionRunner 在输入、渲染与状态变更时调用扩展注册的 UI 回调。",
+      "tags": [
+        "extension",
+        "hook"
+      ],
+      "complexity": "moderate",
+      "filePath": "packages/coding-agent/src/core/extensions/runner.ts",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "flow:extension-and-tools",
+      "type": "flow",
+      "name": "扩展与内置工具",
+      "summary": "动态发现扩展模块、合并内置 read/bash/edit 等 Agent 工具，并通过 resource-loader 聚合 skill 与 prompt 模板。",
+      "tags": [
+        "extension",
+        "tools",
+        "skills"
+      ],
+      "complexity": "complex",
+      "domainMeta": {
+        "entryPoint": "会话启动时 DefaultResourceLoader 加载",
+        "entryType": "event"
+      }
+    },
+    {
+      "id": "step:extension-and-tools:discover-extensions",
+      "type": "step",
+      "name": "发现扩展模块",
+      "summary": "loader.ts 扫描配置路径并动态 import 扩展，构建 ExtensionAPI 运行时。",
+      "tags": [
+        "loader",
+        "dynamic-import"
+      ],
+      "complexity": "complex",
+      "filePath": "packages/coding-agent/src/core/extensions/loader.ts",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "step:extension-and-tools:define-api",
+      "type": "step",
+      "name": "定义扩展契约",
+      "summary": "types.ts 声明 Extension API、工具 schema、命令与 UI 钩子类型，供扩展作者实现。",
+      "tags": [
+        "types",
+        "contract"
+      ],
+      "complexity": "moderate",
+      "filePath": "packages/coding-agent/src/core/extensions/types.ts",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "step:extension-and-tools:create-builtin-tools",
+      "type": "step",
+      "name": "创建内置工具",
+      "summary": "tools/index.ts 实例化 read、bash、edit 等内置 Agent 工具并注册到会话。",
+      "tags": [
+        "builtin",
+        "tools"
+      ],
+      "complexity": "moderate",
+      "filePath": "packages/coding-agent/src/core/tools/index.ts",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "step:extension-and-tools:load-resources",
+      "type": "step",
+      "name": "聚合项目资源",
+      "summary": "DefaultResourceLoader 合并扩展、skill、主题、prompt 模板与 AGENTS.md 等上下文文件。",
+      "tags": [
+        "resource-loader",
+        "context"
+      ],
+      "complexity": "complex",
+      "filePath": "packages/coding-agent/src/core/resource-loader.ts",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "flow:headless-modes",
+      "type": "flow",
+      "name": "无界面运行模式",
+      "summary": "print 模式面向脚本管道输出 assistant 文本；RPC 模式通过 JSONL 将 stdin 命令映射为 AgentSession 操作并流式返回事件。",
+      "tags": [
+        "print",
+        "rpc",
+        "headless"
+      ],
+      "complexity": "moderate",
+      "domainMeta": {
+        "entryPoint": "pi -p / pi --mode rpc",
+        "entryType": "cli"
+      }
+    },
+    {
+      "id": "step:headless-modes:print-stream",
+      "type": "step",
+      "name": "Print 流式输出",
+      "summary": "print-mode.ts 接管 stdout，将 assistant 增量写入管道并处理初始消息与退出码。",
+      "tags": [
+        "print",
+        "stdout"
+      ],
+      "complexity": "moderate",
+      "filePath": "packages/coding-agent/src/modes/print-mode.ts",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "step:headless-modes:rpc-serve",
+      "type": "step",
+      "name": "RPC 服务循环",
+      "summary": "rpc-mode.ts 读取 stdin JSONL 请求，调用 AgentSessionRuntime 并序列化事件流回 stdout。",
+      "tags": [
+        "rpc",
+        "jsonl"
+      ],
+      "complexity": "complex",
+      "filePath": "packages/coding-agent/src/modes/rpc/rpc-mode.ts",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "step:headless-modes:rpc-types",
+      "type": "step",
+      "name": "RPC 载荷类型",
+      "summary": "rpc-types.ts 定义会话、工具、compaction 等操作的请求/响应与事件 payload 结构。",
+      "tags": [
+        "rpc",
+        "types"
+      ],
+      "complexity": "moderate",
+      "filePath": "packages/coding-agent/src/modes/rpc/rpc-types.ts",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "step:headless-modes:runtime-bridge",
+      "type": "step",
+      "name": "Runtime 桥接",
+      "summary": "agent-session-runtime.ts 将无界面调用方与 AgentSession 服务、扩展生命周期对齐。",
+      "tags": [
+        "runtime",
+        "bridge"
+      ],
+      "complexity": "complex",
+      "filePath": "packages/coding-agent/src/core/agent-session-runtime.ts",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "flow:programmatic-sdk",
+      "type": "flow",
+      "name": "编程式 SDK 嵌入",
+      "summary": "外部脚本或 IDE 插件通过 createAgentSession 复用与 CLI 相同的 AgentSession、工具链与会话持久化，仅替换 UI 驱动方。",
+      "tags": [
+        "sdk",
+        "embedding",
+        "api"
+      ],
+      "complexity": "moderate",
+      "domainMeta": {
+        "entryPoint": "createAgentSession()",
+        "entryType": "manual"
+      }
+    },
+    {
+      "id": "step:programmatic-sdk:create-session",
+      "type": "step",
+      "name": "创建 Agent 会话",
+      "summary": "sdk.ts 的 createAgentSession 组装与 CLI 等价的会话、模型与工具配置。",
+      "tags": [
+        "sdk",
+        "create"
+      ],
+      "complexity": "complex",
+      "filePath": "packages/coding-agent/src/core/sdk.ts",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "step:programmatic-sdk:attribution-headers",
+      "type": "step",
+      "name": "注入归因头",
+      "summary": "getAttributionHeaders 为嵌入方请求附加 SDK 来源标识，便于 provider 侧统计。",
+      "tags": [
+        "headers",
+        "attribution"
+      ],
+      "complexity": "simple",
+      "filePath": "packages/coding-agent/src/core/sdk.ts",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "step:programmatic-sdk:export-api",
+      "type": "step",
+      "name": "导出公共 API",
+      "summary": "index.ts barrel 导出 SDK、会话类型与扩展符号，供 npm 包消费者 import。",
+      "tags": [
+        "barrel",
+        "exports"
+      ],
+      "complexity": "simple",
+      "filePath": "packages/coding-agent/src/index.ts",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "flow:stream-inference",
+      "type": "flow",
+      "name": "流式 LLM 推理",
+      "summary": "从统一类型定义经 stream.ts 分派到具体 provider，消费 SSE/流事件并组装 assistant 消息与 tool call。",
+      "tags": [
+        "streaming",
+        "inference",
+        "sse"
+      ],
+      "complexity": "complex",
+      "domainMeta": {
+        "entryPoint": "stream() / streamSimple()",
+        "entryType": "manual"
+      }
+    },
+    {
+      "id": "step:stream-inference:define-types",
+      "type": "step",
+      "name": "定义核心类型",
+      "summary": "types.ts 声明 Message、Tool、Model、StreamEvent 及 provider 接口，为全仓 LLM 交互提供类型基础。",
+      "tags": [
+        "types",
+        "core"
+      ],
+      "complexity": "complex",
+      "filePath": "packages/ai/src/types.ts",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "step:stream-inference:dispatch-provider",
+      "type": "step",
+      "name": "分派 Provider",
+      "summary": "stream.ts 通过 api-registry 解析目标 provider 并调用其 stream/complete 实现。",
+      "tags": [
+        "dispatch",
+        "registry"
+      ],
+      "complexity": "moderate",
+      "filePath": "packages/ai/src/stream.ts",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "step:stream-inference:registry-lookup",
+      "type": "step",
+      "name": "注册表查询",
+      "summary": "api-registry.ts 维护 provider 注册、包装与懒加载内置实现。",
+      "tags": [
+        "registry",
+        "provider"
+      ],
+      "complexity": "moderate",
+      "filePath": "packages/ai/src/api-registry.ts",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "step:stream-inference:provider-stream",
+      "type": "step",
+      "name": "Provider 流式实现",
+      "summary": "如 anthropic.ts 解析 SSE、映射 thinking/tool call 并产出统一 StreamEvent。",
+      "tags": [
+        "provider",
+        "anthropic"
+      ],
+      "complexity": "complex",
+      "filePath": "packages/ai/src/providers/anthropic.ts",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "step:stream-inference:event-normalize",
+      "type": "step",
+      "name": "规范化流事件",
+      "summary": "event-stream 等工具将原始 chunk 转为可消费的 text delta、tool call 与 usage 事件。",
+      "tags": [
+        "events",
+        "normalize"
+      ],
+      "complexity": "moderate",
+      "filePath": "packages/ai/src/utils/event-stream.ts",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "flow:model-and-provider-setup",
+      "type": "flow",
+      "name": "模型目录与 Provider 注册",
+      "summary": "加载内置 provider、查询模型目录、合并用户 models.json，并在 coding-agent 侧解析 CLI/会话级模型选择。",
+      "tags": [
+        "models",
+        "registry",
+        "catalog"
+      ],
+      "complexity": "complex",
+      "domainMeta": {
+        "entryPoint": "pi --list-models / 模型切换",
+        "entryType": "cli"
+      }
+    },
+    {
+      "id": "step:model-and-provider-setup:register-builtins",
+      "type": "step",
+      "name": "注册内置 Provider",
+      "summary": "register-builtins.ts 懒加载 Anthropic、OpenAI、Google 等厂商实现到 api-registry。",
+      "tags": [
+        "builtin",
+        "register"
+      ],
+      "complexity": "moderate",
+      "filePath": "packages/ai/src/providers/register-builtins.ts",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "step:model-and-provider-setup:model-catalog",
+      "type": "step",
+      "name": "查询模型目录",
+      "summary": "models.ts 提供文本模型列表、费用估算与 thinking level 约束查询。",
+      "tags": [
+        "catalog",
+        "pricing"
+      ],
+      "complexity": "moderate",
+      "filePath": "packages/ai/src/models.ts",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "step:model-and-provider-setup:merge-registry",
+      "type": "step",
+      "name": "合并模型注册表",
+      "summary": "model-registry.ts 加载并校验用户 provider/models 配置，与内置目录合并。",
+      "tags": [
+        "model-registry",
+        "config"
+      ],
+      "complexity": "complex",
+      "filePath": "packages/coding-agent/src/core/model-registry.ts",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "step:model-and-provider-setup:resolve-selection",
+      "type": "step",
+      "name": "解析模型选择",
+      "summary": "model-resolver.ts 根据 CLI 标志、会话状态与作用域计算最终 model + provider，含回退策略。",
+      "tags": [
+        "resolver",
+        "fallback"
+      ],
+      "complexity": "complex",
+      "filePath": "packages/coding-agent/src/core/model-resolver.ts",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "step:model-and-provider-setup:list-models-cli",
+      "type": "step",
+      "name": "CLI 列出模型",
+      "summary": "list-models.ts 向用户展示可用模型、provider 与认证状态摘要。",
+      "tags": [
+        "cli",
+        "list"
+      ],
+      "complexity": "simple",
+      "filePath": "packages/coding-agent/src/cli/list-models.ts",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "flow:credential-management",
+      "type": "flow",
+      "name": "凭证与配置解析",
+      "summary": "从环境变量、.env、OAuth 存储与配置模板解析 API key 与请求头，并在缺失时给出 auth 指引。",
+      "tags": [
+        "auth",
+        "oauth",
+        "api-key"
+      ],
+      "complexity": "moderate",
+      "domainMeta": {
+        "entryPoint": "首次调用 provider / login 命令",
+        "entryType": "manual"
+      }
+    },
+    {
+      "id": "step:credential-management:env-keys",
+      "type": "step",
+      "name": "解析环境密钥",
+      "summary": "env-api-keys.ts 从进程环境与 .env 读取各厂商 API key，含 Vertex ADC 检测。",
+      "tags": [
+        "env",
+        "api-key"
+      ],
+      "complexity": "moderate",
+      "filePath": "packages/ai/src/env-api-keys.ts",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "step:credential-management:auth-storage",
+      "type": "step",
+      "name": "持久化 OAuth/Key",
+      "summary": "auth-storage.ts 将 API key 与 OAuth token 写入文件或内存后端供后续请求复用。",
+      "tags": [
+        "oauth",
+        "storage"
+      ],
+      "complexity": "complex",
+      "filePath": "packages/coding-agent/src/core/auth-storage.ts",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "step:credential-management:resolve-config",
+      "type": "step",
+      "name": "解析配置模板",
+      "summary": "resolve-config-value.ts 展开 env var、shell 命令与 header 模板为实际请求参数。",
+      "tags": [
+        "config",
+        "template"
+      ],
+      "complexity": "complex",
+      "filePath": "packages/coding-agent/src/core/resolve-config-value.ts",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "step:credential-management:auth-guidance",
+      "type": "step",
+      "name": "认证用户指引",
+      "summary": "auth-guidance.ts 在模型或凭证缺失时格式化可操作的登录/配置提示。",
+      "tags": [
+        "guidance",
+        "ux"
+      ],
+      "complexity": "moderate",
+      "filePath": "packages/coding-agent/src/core/auth-guidance.ts",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "flow:agent-main-loop",
+      "type": "flow",
+      "name": "Agent 工具主循环",
+      "summary": "Agent 类维护消息队列与状态，agent-loop.ts 驱动「流式 LLM → 执行 tool → 写回 tool result → 继续」直至完成或中止。",
+      "tags": [
+        "agent-loop",
+        "tool-calling"
+      ],
+      "complexity": "complex",
+      "domainMeta": {
+        "entryPoint": "Agent.prompt() / 会话发送消息",
+        "entryType": "event"
+      }
+    },
+    {
+      "id": "step:agent-main-loop:agent-state",
+      "type": "step",
+      "name": "维护 Agent 状态",
+      "summary": "agent.ts 封装消息历史、运行标志与队列，对外暴露 prompt 与 cancel API。",
+      "tags": [
+        "agent",
+        "state"
+      ],
+      "complexity": "complex",
+      "filePath": "packages/agent/src/agent.ts",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "step:agent-main-loop:stream-llm",
+      "type": "step",
+      "name": "流式调用 LLM",
+      "summary": "agent-loop.ts 发起 stream 请求并增量处理 text、reasoning、tool call 事件。",
+      "tags": [
+        "stream",
+        "llm"
+      ],
+      "complexity": "complex",
+      "filePath": "packages/agent/src/agent-loop.ts",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "step:agent-main-loop:execute-tools",
+      "type": "step",
+      "name": "执行工具调用",
+      "summary": "对每个 tool call 调用注册 handler，收集 stdout/文件结果或错误。",
+      "tags": [
+        "tools",
+        "execution"
+      ],
+      "complexity": "complex",
+      "filePath": "packages/agent/src/agent-loop.ts",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "step:agent-main-loop:append-results",
+      "type": "step",
+      "name": "写回工具结果",
+      "summary": "将 tool result 消息追加到历史，若模型仍需继续则进入下一轮 stream。",
+      "tags": [
+        "messages",
+        "loop"
+      ],
+      "complexity": "moderate",
+      "filePath": "packages/agent/src/agent-loop.ts",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "step:agent-main-loop:terminate",
+      "type": "step",
+      "name": "结束或重试",
+      "summary": "在无 pending tool 或收到 stop reason 时完成轮次；错误路径触发 retry/compaction 策略。",
+      "tags": [
+        "termination",
+        "retry"
+      ],
+      "complexity": "moderate",
+      "filePath": "packages/agent/src/agent-loop.ts",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "flow:harness-orchestration",
+      "type": "flow",
+      "name": "Agent Harness 编排",
+      "summary": "AgentHarness 在更高层封装 stream 选项、会话仓储与错误类型，供需要文件系统与执行沙箱的集成方使用。",
+      "tags": [
+        "harness",
+        "orchestration"
+      ],
+      "complexity": "complex",
+      "domainMeta": {
+        "entryPoint": "AgentHarness 构造与 run",
+        "entryType": "manual"
+      }
+    },
+    {
+      "id": "step:harness-orchestration:harness-init",
+      "type": "step",
+      "name": "初始化 Harness",
+      "summary": "AgentHarness 合并默认 headers、stream 补丁与失败消息模板。",
+      "tags": [
+        "harness",
+        "init"
+      ],
+      "complexity": "complex",
+      "filePath": "packages/agent/src/harness/agent-harness.ts",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "step:harness-orchestration:session-repo",
+      "type": "step",
+      "name": "会话仓储",
+      "summary": "JsonlSessionRepo / InMemorySessionRepo 抽象会话 CRUD 与 fork 条目复制。",
+      "tags": [
+        "session",
+        "repository"
+      ],
+      "complexity": "moderate",
+      "filePath": "packages/agent/src/harness/session/jsonl-repo.ts",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "step:harness-orchestration:build-context",
+      "type": "step",
+      "name": "构建 Harness 上下文",
+      "summary": "Session.buildSessionContext 将会话条目转换为模型输入并计算 token 用量。",
+      "tags": [
+        "context",
+        "tokens"
+      ],
+      "complexity": "moderate",
+      "filePath": "packages/agent/src/harness/session/session.ts",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "step:harness-orchestration:error-types",
+      "type": "step",
+      "name": "统一错误类型",
+      "summary": "types.ts 定义 FileError、ExecutionError、CompactionError 等可区分错误，供调用方处理。",
+      "tags": [
+        "errors",
+        "result"
+      ],
+      "complexity": "moderate",
+      "filePath": "packages/agent/src/harness/types.ts",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "step:harness-orchestration:truncate-output",
+      "type": "step",
+      "name": "截断超大输出",
+      "summary": "truncate.ts 按字节限制工具输出，避免撑爆上下文窗口。",
+      "tags": [
+        "truncate",
+        "safety"
+      ],
+      "complexity": "simple",
+      "filePath": "packages/agent/src/harness/utils/truncate.ts",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "flow:context-compaction",
+      "type": "flow",
+      "name": "上下文 Compaction",
+      "summary": "当对话接近上下文上限时，估算 token、生成摘要并写入 compaction 条目，在后续轮次用摘要替换冗长历史。",
+      "tags": [
+        "compaction",
+        "summarization",
+        "tokens"
+      ],
+      "complexity": "complex",
+      "domainMeta": {
+        "entryPoint": "自动或 /compact 触发",
+        "entryType": "event"
+      }
+    },
+    {
+      "id": "step:context-compaction:estimate-tokens",
+      "type": "step",
+      "name": "估算上下文 Token",
+      "summary": "harness compaction 与 coding-agent compaction 模块计算当前条目 token 总量。",
+      "tags": [
+        "tokens",
+        "estimation"
+      ],
+      "complexity": "moderate",
+      "filePath": "packages/agent/src/harness/compaction/compaction.ts",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "step:context-compaction:generate-summary",
+      "type": "step",
+      "name": "生成压缩摘要",
+      "summary": "compaction.ts / branch-summarization.ts 调用 LLM 将旧消息归纳为 compaction 摘要条目。",
+      "tags": [
+        "summarization",
+        "llm"
+      ],
+      "complexity": "complex",
+      "filePath": "packages/coding-agent/src/core/compaction/compaction.ts",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "step:context-compaction:persist-entry",
+      "type": "step",
+      "name": "持久化 Compaction 条目",
+      "summary": "SessionManager 写入 compaction 类型条目并更新 getLatestCompactionEntry 指针。",
+      "tags": [
+        "persistence",
+        "jsonl"
+      ],
+      "complexity": "moderate",
+      "filePath": "packages/coding-agent/src/core/session-manager.ts",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "step:context-compaction:ui-feedback",
+      "type": "step",
+      "name": "TUI 展示压缩结果",
+      "summary": "compaction-summary-message 组件在交互模式向用户展示压缩摘要与时间线。",
+      "tags": [
+        "tui",
+        "feedback"
+      ],
+      "complexity": "simple",
+      "filePath": "packages/coding-agent/src/modes/interactive/components/compaction-summary-message.ts",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "flow:tui-runtime",
+      "type": "flow",
+      "name": "TUI 运行时生命周期",
+      "summary": "tui.ts 管理终端尺寸、组件树、焦点与重绘循环；stdin-buffer 保证键盘输入序列完整解析后再分派。",
+      "tags": [
+        "tui",
+        "runtime",
+        "input"
+      ],
+      "complexity": "complex",
+      "domainMeta": {
+        "entryPoint": "new TUI() / tui.start()",
+        "entryType": "manual"
+      }
+    },
+    {
+      "id": "step:tui-runtime:stdin-buffer",
+      "type": "step",
+      "name": "缓冲终端输入",
+      "summary": "StdinBuffer 拼接并识别完整 CSI/OSC/DCS 转义序列，避免半包按键事件。",
+      "tags": [
+        "stdin",
+        "escape"
+      ],
+      "complexity": "moderate",
+      "filePath": "packages/tui/src/stdin-buffer.ts",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "step:tui-runtime:tui-core",
+      "type": "step",
+      "name": "TUI 核心循环",
+      "summary": "tui.ts 维护根组件、overlay 栈、焦点链与 requestRender 驱动的重绘。",
+      "tags": [
+        "tui",
+        "render-loop"
+      ],
+      "complexity": "complex",
+      "filePath": "packages/tui/src/tui.ts",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "step:tui-runtime:layout-components",
+      "type": "step",
+      "name": "布局组件树",
+      "summary": "Box 等容器按终端宽高对子组件做 flex 式布局与裁剪。",
+      "tags": [
+        "layout",
+        "box"
+      ],
+      "complexity": "moderate",
+      "filePath": "packages/tui/src/components/box.ts",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "step:tui-runtime:focus-management",
+      "type": "step",
+      "name": "焦点管理",
+      "summary": "TUI 在 Editor、SelectList 等可聚焦组件间切换键盘焦点并路由按键。",
+      "tags": [
+        "focus",
+        "keyboard"
+      ],
+      "complexity": "moderate",
+      "filePath": "packages/tui/src/tui.ts",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "step:tui-runtime:barrel-exports",
+      "type": "step",
+      "name": "导出公共原语",
+      "summary": "index.ts 聚合导出 TUI、组件与终端工具符号供 coding-agent import。",
+      "tags": [
+        "barrel",
+        "exports"
+      ],
+      "complexity": "simple",
+      "filePath": "packages/tui/src/index.ts",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "flow:ui-components",
+      "type": "flow",
+      "name": "终端 UI 组件",
+      "summary": "Editor、SelectList、Markdown、Loader 等可组合组件，支撑 coding-agent 的输入、选择与消息渲染体验。",
+      "tags": [
+        "components",
+        "editor",
+        "markdown"
+      ],
+      "complexity": "moderate",
+      "domainMeta": {
+        "entryPoint": "交互模式挂载子组件",
+        "entryType": "event"
+      }
+    },
+    {
+      "id": "step:ui-components:editor-input",
+      "type": "step",
+      "name": "多行编辑器输入",
+      "summary": "Editor 处理换行、词折行与 marker 分段，作为用户 prompt 输入区。",
+      "tags": [
+        "editor",
+        "input"
+      ],
+      "complexity": "complex",
+      "filePath": "packages/tui/src/components/editor.ts",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "step:ui-components:select-list",
+      "type": "step",
+      "name": "列表选择器",
+      "summary": "SelectList 渲染可搜索选项，用于模型、会话与配置选择场景。",
+      "tags": [
+        "select",
+        "list"
+      ],
+      "complexity": "moderate",
+      "filePath": "packages/tui/src/components/select-list.ts",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "step:ui-components:markdown-render",
+      "type": "step",
+      "name": "Markdown 渲染",
+      "summary": "Markdown 组件将 assistant 回复转为带样式的终端文本布局。",
+      "tags": [
+        "markdown",
+        "render"
+      ],
+      "complexity": "moderate",
+      "filePath": "packages/tui/src/components/markdown.ts",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "step:ui-components:path-autocomplete",
+      "type": "step",
+      "name": "路径自动补全",
+      "summary": "autocomplete.ts 结合 fd 扫描为编辑器提供文件路径补全建议。",
+      "tags": [
+        "autocomplete",
+        "paths"
+      ],
+      "complexity": "moderate",
+      "filePath": "packages/tui/src/autocomplete.ts",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "flow:terminal-imaging",
+      "type": "flow",
+      "name": "终端图像渲染",
+      "summary": "探测 Kitty/iTerm2 能力并将 PNG 编码为 inline 图像协议，供 TUI 展示截图或附件预览。",
+      "tags": [
+        "image",
+        "kitty",
+        "iterm2"
+      ],
+      "complexity": "moderate",
+      "domainMeta": {
+        "entryPoint": "组件请求显示图像",
+        "entryType": "event"
+      }
+    },
+    {
+      "id": "step:terminal-imaging:detect-caps",
+      "type": "step",
+      "name": "探测终端能力",
+      "summary": "detectCapabilities 识别当前终端支持的图像协议并缓存结果。",
+      "tags": [
+        "capabilities",
+        "detect"
+      ],
+      "complexity": "moderate",
+      "filePath": "packages/tui/src/terminal-image.ts",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "step:terminal-imaging:encode-kitty",
+      "type": "step",
+      "name": "Kitty 协议编码",
+      "summary": "encodeKitty 将位图分块为 Kitty graphics 转义序列写入 stdout。",
+      "tags": [
+        "kitty",
+        "encode"
+      ],
+      "complexity": "moderate",
+      "filePath": "packages/tui/src/terminal-image.ts",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "step:terminal-imaging:encode-iterm2",
+      "type": "step",
+      "name": "iTerm2 内联图像",
+      "summary": "encodeITerm2 生成 base64 inline 图像序列作为回退方案。",
+      "tags": [
+        "iterm2",
+        "fallback"
+      ],
+      "complexity": "moderate",
+      "filePath": "packages/tui/src/terminal-image.ts",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "step:terminal-imaging:image-component",
+      "type": "step",
+      "name": "Image 组件展示",
+      "summary": "Image 组件根据单元格尺寸计算行高并调用 terminal-image 工具输出。",
+      "tags": [
+        "component",
+        "display"
+      ],
+      "complexity": "moderate",
+      "filePath": "packages/tui/src/components/image.ts",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "flow:ci-quality-gate",
+      "type": "flow",
+      "name": "持续集成质量门禁",
+      "summary": "push 与 pull_request 触发 ci.yml：安装依赖、构建各包、运行 check 与 test，作为合并前的品质门禁。",
+      "tags": [
+        "ci",
+        "github-actions",
+        "quality"
+      ],
+      "complexity": "moderate",
+      "domainMeta": {
+        "entryPoint": "git push / pull_request",
+        "entryType": "event"
+      }
+    },
+    {
+      "id": "step:ci-quality-gate:trigger-workflow",
+      "type": "step",
+      "name": "触发 CI 工作流",
+      "summary": "ci.yml 在 push/PR 到 main 时启动并行 job。",
+      "tags": [
+        "trigger",
+        "workflow"
+      ],
+      "complexity": "simple",
+      "filePath": ".github/workflows/ci.yml",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "step:ci-quality-gate:install-deps",
+      "type": "step",
+      "name": "安装依赖",
+      "summary": "CI 执行 npm ci --ignore-scripts 以可复现方式还原 lockfile 依赖树。",
+      "tags": [
+        "npm-ci",
+        "install"
+      ],
+      "complexity": "simple",
+      "filePath": ".github/workflows/ci.yml",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "step:ci-quality-gate:build-packages",
+      "type": "step",
+      "name": "构建 Workspace 包",
+      "summary": "npm run build 编译 coding-agent、ai、agent、tui 等 workspace 产物。",
+      "tags": [
+        "build",
+        "workspaces"
+      ],
+      "complexity": "moderate",
+      "filePath": ".github/workflows/ci.yml",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "step:ci-quality-gate:check-and-test",
+      "type": "step",
+      "name": "静态检查与测试",
+      "summary": "依次运行 npm run check（lint/typecheck）与 npm test（Vitest 套件，含 faux provider 测试）。",
+      "tags": [
+        "check",
+        "vitest"
+      ],
+      "complexity": "moderate",
+      "filePath": ".github/workflows/ci.yml",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "flow:release-pipeline",
+      "type": "flow",
+      "name": "版本发布与二进制构建",
+      "summary": "lockstep 版本 bump 后打 tag 触发 build-binaries.yml：多平台编译 pi 二进制并通过 GitHub OIDC 发布 npm 包。",
+      "tags": [
+        "release",
+        "binary",
+        "npm-publish"
+      ],
+      "complexity": "complex",
+      "domainMeta": {
+        "entryPoint": "git tag vX.Y.Z",
+        "entryType": "event"
+      }
+    },
+    {
+      "id": "step:release-pipeline:version-bump",
+      "type": "step",
+      "name": "Lockstep 版本提升",
+      "summary": "release 脚本同步 bump 四包版本、更新 CHANGELOG 并提交 Release 提交。",
+      "tags": [
+        "version",
+        "changelog"
+      ],
+      "complexity": "moderate",
+      "filePath": "package.json",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "step:release-pipeline:tag-push",
+      "type": "step",
+      "name": "推送版本标签",
+      "summary": "向 remote 推送 main 与 vX.Y.Z 标签以触发发布工作流。",
+      "tags": [
+        "git-tag",
+        "trigger"
+      ],
+      "complexity": "simple",
+      "filePath": ".github/workflows/build-binaries.yml",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "step:release-pipeline:build-binaries",
+      "type": "step",
+      "name": "构建多平台二进制",
+      "summary": "build-binaries.yml 为 Node/Bun 等目标平台编译可分发 pi 可执行文件。",
+      "tags": [
+        "binary",
+        "cross-compile"
+      ],
+      "complexity": "complex",
+      "filePath": ".github/workflows/build-binaries.yml",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "step:release-pipeline:oidc-npm-publish",
+      "type": "step",
+      "name": "OIDC 发布 npm",
+      "summary": "publish-npm job 通过 GitHub environment 与 OIDC 向 npm registry 发布 @mariozechner/* 包（跳过已存在版本）。",
+      "tags": [
+        "oidc",
+        "npm-publish"
+      ],
+      "complexity": "moderate",
+      "filePath": ".github/workflows/build-binaries.yml",
+      "lineRange": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "step:release-pipeline:bun-entry",
+      "type": "step",
+      "name": "Bun 二进制入口",
+      "summary": "bun/cli.ts 在编译产物中恢复沙箱环境变量后加载与 Node 相同的主 CLI 逻辑。",
+      "tags": [
+        "bun",
+        "binary"
+      ],
+      "complexity": "simple",
+      "filePath": "packages/coding-agent/src/bun/cli.ts",
+      "lineRange": [
+        0,
+        0
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "source": "domain:coding-agent",
+      "target": "flow:cli-bootstrap",
+      "type": "contains_flow",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "domain:coding-agent",
+      "target": "flow:session-lifecycle",
+      "type": "contains_flow",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "domain:coding-agent",
+      "target": "flow:interactive-tui",
+      "type": "contains_flow",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "domain:coding-agent",
+      "target": "flow:extension-and-tools",
+      "type": "contains_flow",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "domain:coding-agent",
+      "target": "flow:headless-modes",
+      "type": "contains_flow",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "domain:coding-agent",
+      "target": "flow:programmatic-sdk",
+      "type": "contains_flow",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "domain:unified-llm-api",
+      "target": "flow:stream-inference",
+      "type": "contains_flow",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "domain:unified-llm-api",
+      "target": "flow:model-and-provider-setup",
+      "type": "contains_flow",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "domain:unified-llm-api",
+      "target": "flow:credential-management",
+      "type": "contains_flow",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "domain:agent-core-runtime",
+      "target": "flow:agent-main-loop",
+      "type": "contains_flow",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "domain:agent-core-runtime",
+      "target": "flow:harness-orchestration",
+      "type": "contains_flow",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "domain:agent-core-runtime",
+      "target": "flow:context-compaction",
+      "type": "contains_flow",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "domain:terminal-ui",
+      "target": "flow:tui-runtime",
+      "type": "contains_flow",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "domain:terminal-ui",
+      "target": "flow:ui-components",
+      "type": "contains_flow",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "domain:terminal-ui",
+      "target": "flow:terminal-imaging",
+      "type": "contains_flow",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "domain:ci-cd-release",
+      "target": "flow:ci-quality-gate",
+      "type": "contains_flow",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "domain:ci-cd-release",
+      "target": "flow:release-pipeline",
+      "type": "contains_flow",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "flow:cli-bootstrap",
+      "target": "step:cli-bootstrap:shared-bootstrap",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.2
+    },
+    {
+      "source": "flow:cli-bootstrap",
+      "target": "step:cli-bootstrap:parse-args",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.4
+    },
+    {
+      "source": "flow:cli-bootstrap",
+      "target": "step:cli-bootstrap:run-migrations",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "flow:cli-bootstrap",
+      "target": "step:cli-bootstrap:assemble-services",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "flow:cli-bootstrap",
+      "target": "step:cli-bootstrap:dispatch-mode",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "flow:session-lifecycle",
+      "target": "step:session-lifecycle:load-entries",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.2
+    },
+    {
+      "source": "flow:session-lifecycle",
+      "target": "step:session-lifecycle:validate-cwd",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.4
+    },
+    {
+      "source": "flow:session-lifecycle",
+      "target": "step:session-lifecycle:build-context",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "flow:session-lifecycle",
+      "target": "step:session-lifecycle:agent-turn",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "flow:session-lifecycle",
+      "target": "step:session-lifecycle:persist-turn",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "flow:interactive-tui",
+      "target": "step:interactive-tui:output-guard",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.2
+    },
+    {
+      "source": "flow:interactive-tui",
+      "target": "step:interactive-tui:mount-ui",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.4
+    },
+    {
+      "source": "flow:interactive-tui",
+      "target": "step:interactive-tui:keybindings",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "flow:interactive-tui",
+      "target": "step:interactive-tui:render-messages",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "flow:interactive-tui",
+      "target": "step:interactive-tui:extension-hooks",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "flow:extension-and-tools",
+      "target": "step:extension-and-tools:discover-extensions",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.25
+    },
+    {
+      "source": "flow:extension-and-tools",
+      "target": "step:extension-and-tools:define-api",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "flow:extension-and-tools",
+      "target": "step:extension-and-tools:create-builtin-tools",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.75
+    },
+    {
+      "source": "flow:extension-and-tools",
+      "target": "step:extension-and-tools:load-resources",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "flow:headless-modes",
+      "target": "step:headless-modes:print-stream",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.25
+    },
+    {
+      "source": "flow:headless-modes",
+      "target": "step:headless-modes:rpc-serve",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "flow:headless-modes",
+      "target": "step:headless-modes:rpc-types",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.75
+    },
+    {
+      "source": "flow:headless-modes",
+      "target": "step:headless-modes:runtime-bridge",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "flow:programmatic-sdk",
+      "target": "step:programmatic-sdk:create-session",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.33
+    },
+    {
+      "source": "flow:programmatic-sdk",
+      "target": "step:programmatic-sdk:attribution-headers",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.67
+    },
+    {
+      "source": "flow:programmatic-sdk",
+      "target": "step:programmatic-sdk:export-api",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "flow:stream-inference",
+      "target": "step:stream-inference:define-types",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.2
+    },
+    {
+      "source": "flow:stream-inference",
+      "target": "step:stream-inference:dispatch-provider",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.4
+    },
+    {
+      "source": "flow:stream-inference",
+      "target": "step:stream-inference:registry-lookup",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "flow:stream-inference",
+      "target": "step:stream-inference:provider-stream",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "flow:stream-inference",
+      "target": "step:stream-inference:event-normalize",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "flow:model-and-provider-setup",
+      "target": "step:model-and-provider-setup:register-builtins",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.2
+    },
+    {
+      "source": "flow:model-and-provider-setup",
+      "target": "step:model-and-provider-setup:model-catalog",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.4
+    },
+    {
+      "source": "flow:model-and-provider-setup",
+      "target": "step:model-and-provider-setup:merge-registry",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "flow:model-and-provider-setup",
+      "target": "step:model-and-provider-setup:resolve-selection",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "flow:model-and-provider-setup",
+      "target": "step:model-and-provider-setup:list-models-cli",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "flow:credential-management",
+      "target": "step:credential-management:env-keys",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.25
+    },
+    {
+      "source": "flow:credential-management",
+      "target": "step:credential-management:auth-storage",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "flow:credential-management",
+      "target": "step:credential-management:resolve-config",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.75
+    },
+    {
+      "source": "flow:credential-management",
+      "target": "step:credential-management:auth-guidance",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "flow:agent-main-loop",
+      "target": "step:agent-main-loop:agent-state",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.2
+    },
+    {
+      "source": "flow:agent-main-loop",
+      "target": "step:agent-main-loop:stream-llm",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.4
+    },
+    {
+      "source": "flow:agent-main-loop",
+      "target": "step:agent-main-loop:execute-tools",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "flow:agent-main-loop",
+      "target": "step:agent-main-loop:append-results",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "flow:agent-main-loop",
+      "target": "step:agent-main-loop:terminate",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "flow:harness-orchestration",
+      "target": "step:harness-orchestration:harness-init",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.2
+    },
+    {
+      "source": "flow:harness-orchestration",
+      "target": "step:harness-orchestration:session-repo",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.4
+    },
+    {
+      "source": "flow:harness-orchestration",
+      "target": "step:harness-orchestration:build-context",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "flow:harness-orchestration",
+      "target": "step:harness-orchestration:error-types",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "flow:harness-orchestration",
+      "target": "step:harness-orchestration:truncate-output",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "flow:context-compaction",
+      "target": "step:context-compaction:estimate-tokens",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.25
+    },
+    {
+      "source": "flow:context-compaction",
+      "target": "step:context-compaction:generate-summary",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "flow:context-compaction",
+      "target": "step:context-compaction:persist-entry",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.75
+    },
+    {
+      "source": "flow:context-compaction",
+      "target": "step:context-compaction:ui-feedback",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "flow:tui-runtime",
+      "target": "step:tui-runtime:stdin-buffer",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.2
+    },
+    {
+      "source": "flow:tui-runtime",
+      "target": "step:tui-runtime:tui-core",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.4
+    },
+    {
+      "source": "flow:tui-runtime",
+      "target": "step:tui-runtime:layout-components",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "flow:tui-runtime",
+      "target": "step:tui-runtime:focus-management",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "flow:tui-runtime",
+      "target": "step:tui-runtime:barrel-exports",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "flow:ui-components",
+      "target": "step:ui-components:editor-input",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.25
+    },
+    {
+      "source": "flow:ui-components",
+      "target": "step:ui-components:select-list",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "flow:ui-components",
+      "target": "step:ui-components:markdown-render",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.75
+    },
+    {
+      "source": "flow:ui-components",
+      "target": "step:ui-components:path-autocomplete",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "flow:terminal-imaging",
+      "target": "step:terminal-imaging:detect-caps",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.25
+    },
+    {
+      "source": "flow:terminal-imaging",
+      "target": "step:terminal-imaging:encode-kitty",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "flow:terminal-imaging",
+      "target": "step:terminal-imaging:encode-iterm2",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.75
+    },
+    {
+      "source": "flow:terminal-imaging",
+      "target": "step:terminal-imaging:image-component",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "flow:ci-quality-gate",
+      "target": "step:ci-quality-gate:trigger-workflow",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.25
+    },
+    {
+      "source": "flow:ci-quality-gate",
+      "target": "step:ci-quality-gate:install-deps",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "flow:ci-quality-gate",
+      "target": "step:ci-quality-gate:build-packages",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.75
+    },
+    {
+      "source": "flow:ci-quality-gate",
+      "target": "step:ci-quality-gate:check-and-test",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "flow:release-pipeline",
+      "target": "step:release-pipeline:version-bump",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.2
+    },
+    {
+      "source": "flow:release-pipeline",
+      "target": "step:release-pipeline:tag-push",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.4
+    },
+    {
+      "source": "flow:release-pipeline",
+      "target": "step:release-pipeline:build-binaries",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "flow:release-pipeline",
+      "target": "step:release-pipeline:oidc-npm-publish",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "flow:release-pipeline",
+      "target": "step:release-pipeline:bun-entry",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "domain:coding-agent",
+      "target": "domain:agent-core-runtime",
+      "type": "cross_domain",
+      "direction": "forward",
+      "description": "AgentSession 委托 pi-agent 的 Agent/agent-loop 执行 LLM 工具循环",
+      "weight": 0.8
+    },
+    {
+      "source": "domain:coding-agent",
+      "target": "domain:unified-llm-api",
+      "type": "cross_domain",
+      "direction": "forward",
+      "description": "通过 model-registry/resolver 选择模型并调用 pi-ai stream/complete",
+      "weight": 0.8
+    },
+    {
+      "source": "domain:coding-agent",
+      "target": "domain:terminal-ui",
+      "type": "cross_domain",
+      "direction": "forward",
+      "description": "interactive-mode 基于 pi-tui 组件构建全屏终端体验",
+      "weight": 0.7
+    },
+    {
+      "source": "domain:agent-core-runtime",
+      "target": "domain:unified-llm-api",
+      "type": "cross_domain",
+      "direction": "forward",
+      "description": "agent-loop 与 AgentHarness 通过 stream.ts 发起多 Provider 推理",
+      "weight": 0.9
+    },
+    {
+      "source": "domain:coding-agent",
+      "target": "domain:ci-cd-release",
+      "type": "cross_domain",
+      "direction": "forward",
+      "description": "coding-agent 包是 CI 构建与 npm/二进制发布的主交付物",
+      "weight": 0.5
+    },
+    {
+      "source": "domain:agent-core-runtime",
+      "target": "domain:coding-agent",
+      "type": "cross_domain",
+      "direction": "forward",
+      "description": "SessionManager 与 harness JSONL 格式对齐，共享 compaction 语义",
+      "weight": 0.6
+    }
+  ],
+  "layers": [],
+  "tour": []
+}

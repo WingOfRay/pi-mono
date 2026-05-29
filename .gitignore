@@ -17,6 +17,8 @@ packages/*/dist-firefox/
 .zed/
 .idea/
 .claude/
+.specstory/
+.cursor/
 *.swp
 *.swo
 *~
